@@ -1,0 +1,10 @@
+assets/reference/
+CLAUDE.md
+.DS_Store
+.claude/
+.playwright-mcp/
+.playwright-shots/
+claude_session_resume.txt
+summaries/
+# stray dev screenshots — not part of the deployed game
+skeleton_*.png
