@@ -139,8 +139,24 @@ canvas.width = VIEW_W;
 canvas.height = VIEW_H;
 ctx.imageSmoothingEnabled = false;
 
+// On phones the screen is far wider than the game's 16:9, so a plain "contain"
+// fit leaves big side bars and a small scene. On touch devices we zoom past
+// contain to fill the screen, capped two ways so the zoom is always safe:
+//   - never wider than the viewport, so upcoming obstacles on the right are
+//     never cropped (which would be unfair);
+//   - never so tall that we hide more than the empty street below Arthur, so
+//     the top HUD and Arthur himself always stay on screen.
+// The CSS top-anchors the canvas on touch (see index.html) so all of the
+// vertical overflow is cropped off the bottom street, never the HUD.
+const SAFE_VISIBLE_H = 475; // keep y=0 (HUD) .. y=475 (just below Arthur's feet) visible
+
 function fitCanvas() {
-  const scale = Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H);
+  const contain = Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H);
+  let scale = contain;
+  if (IS_TOUCH) {
+    const fill = Math.min(window.innerWidth / VIEW_W, window.innerHeight / SAFE_VISIBLE_H);
+    scale = Math.max(contain, fill);
+  }
   canvas.style.width = `${Math.floor(VIEW_W * scale)}px`;
   canvas.style.height = `${Math.floor(VIEW_H * scale)}px`;
 }

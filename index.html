@@ -22,6 +22,12 @@
       image-rendering: pixelated;
       touch-action: none;
     }
+    /* On touch devices game.js zooms the canvas to fill the screen, which makes
+       it taller than the viewport. Top-anchor it so the overflow is cropped off
+       the bottom street, never the HUD at the top. Desktop stays centered. */
+    @media (pointer: coarse) {
+      body { align-items: flex-start; }
+    }
     /* Portrait rotate hint: the 16:9 game letterboxes to a thin strip in
        portrait, so on touch devices held upright we cover the screen and ask
        for landscape. game.js pauses the run while this is showing. */
