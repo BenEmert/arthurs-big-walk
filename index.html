@@ -22,10 +22,37 @@
       image-rendering: pixelated;
       touch-action: none;
     }
+    /* Portrait rotate hint: the 16:9 game letterboxes to a thin strip in
+       portrait, so on touch devices held upright we cover the screen and ask
+       for landscape. game.js pauses the run while this is showing. */
+    #rotate-hint { display: none; }
+    @media (orientation: portrait) and (pointer: coarse) {
+      #rotate-hint {
+        display: flex;
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: #1c2530;
+        color: #f0f4f8;
+        font-family: monospace;
+        text-align: center;
+        padding: 24px;
+      }
+      #rotate-hint .glyph { font-size: 64px; }
+      #rotate-hint p { margin: 0; font-size: 20px; line-height: 1.5; }
+    }
   </style>
 </head>
 <body>
   <canvas id="game"></canvas>
+  <div id="rotate-hint">
+    <div class="glyph">📱↻</div>
+    <p>Rotate your phone<br>Arthur walks in landscape</p>
+  </div>
   <script src="game.js"></script>
 </body>
 </html>

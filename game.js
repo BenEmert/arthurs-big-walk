@@ -34,6 +34,13 @@ const MAX_SCROLL_SPEED = 14;
 // so slightly-early presses don't get eaten. // TODO: tune
 const JUMP_BUFFER_FRAMES = 8;
 
+// Touch (spec §5): tap the upper TOUCH_JUMP_FRACTION of the canvas to jump,
+// the lower part to duck. A duck holds for at least MIN_DUCK_FRAMES so a quick
+// tap still produces a visible duck instead of a single-frame flicker.
+const TOUCH_JUMP_FRACTION = 2 / 3;
+const MIN_DUCK_FRAMES = 10;       // ~0.17s // TODO: tune
+const IS_TOUCH = window.matchMedia("(pointer: coarse)").matches;
+
 // Parallax factors per background layer (spec §3)
 const PARALLAX_FAR = 0.2;
 const PARALLAX_MID = 0.5;
@@ -138,7 +145,20 @@ function fitCanvas() {
   canvas.style.height = `${Math.floor(VIEW_H * scale)}px`;
 }
 window.addEventListener("resize", fitCanvas);
+// Mobile browsers fire orientationchange and (on URL-bar show/hide) a
+// visualViewport resize without always firing a window resize — refit on both.
+window.addEventListener("orientationchange", fitCanvas);
+if (window.visualViewport) window.visualViewport.addEventListener("resize", fitCanvas);
 fitCanvas();
+
+// In portrait the 16:9 game letterboxes to a thin strip, so the HTML overlay in
+// index.html asks the player to rotate. Pause an in-progress run while portrait
+// so Arthur can't die unseen behind the overlay.
+const portraitMQ = window.matchMedia("(orientation: portrait) and (pointer: coarse)");
+function syncPortraitPause() {
+  if (portraitMQ.matches && state === STATE.PLAYING) state = STATE.PAUSED;
+}
+portraitMQ.addEventListener("change", syncPortraitPause);
 
 // ---------------- Background layers (parallax, daytime LA) ----------------
 // Each layer is pre-rendered once into an offscreen canvas and then drawn as
@@ -1135,6 +1155,16 @@ function spawnGap(prevType, nextType) {
 const JUMP_KEYS = ["Space", "ArrowUp", "KeyW"];
 const DUCK_KEYS = ["ArrowDown", "KeyS"];
 let duckHeld = false;
+let duckTimer = 0; // frames a duck stays active even after release (min-duck)
+
+function pressDuck() {
+  duckHeld = true;
+  duckTimer = MIN_DUCK_FRAMES; // guarantee a visible duck even for a quick tap
+}
+
+function releaseDuck() {
+  duckHeld = false;
+}
 
 function jump() {
   if (arthur.grounded) {
@@ -1165,26 +1195,57 @@ window.addEventListener("keydown", (e) => {
     resumeRun();
   } else if (state === STATE.PLAYING) {
     if (JUMP_KEYS.includes(e.code)) jump();
-    if (DUCK_KEYS.includes(e.code)) duckHeld = true;
+    if (DUCK_KEYS.includes(e.code)) pressDuck();
   }
 });
 
 window.addEventListener("keyup", (e) => {
-  if (DUCK_KEYS.includes(e.code)) duckHeld = false;
+  if (DUCK_KEYS.includes(e.code)) releaseDuck();
 });
 
-// Minimal touch support: tap = start / jump. The real control zones
-// (tap upper 2/3 to jump, lower 1/3 to duck) land with the controls pass.
+// Touch control zones (spec §5): tap the upper TOUCH_JUMP_FRACTION of the
+// canvas to jump, the lower part to duck (hold to keep ducking). Zone is read
+// from the canvas rect so it tracks the letterboxed canvas, not raw screen
+// pixels; a touch above/below the canvas clamps into the nearest zone.
+function touchIsJumpZone(touch) {
+  const rect = canvas.getBoundingClientRect();
+  const fracY = (touch.clientY - rect.top) / rect.height;
+  return fracY < TOUCH_JUMP_FRACTION;
+}
+
+let duckTouchId = null; // identifier of the touch currently holding duck, if any
+
 window.addEventListener(
   "touchstart",
   (e) => {
     e.preventDefault();
-    if (state === STATE.PLAYING) jump();
-    else if (state === STATE.PAUSED) resumeRun();
-    else if (state === STATE.MENU || state === STATE.GAME_OVER) startRun();
+    if (portraitMQ.matches) return; // ignore taps under the rotate overlay
+    // Outside PLAYING, any tap just advances the state (zone-agnostic).
+    if (state === STATE.MENU || state === STATE.GAME_OVER) return startRun();
+    if (state === STATE.PAUSED) return resumeRun();
+    if (state !== STATE.PLAYING) return;
+    for (const touch of e.changedTouches) {
+      if (touchIsJumpZone(touch)) {
+        jump();
+      } else {
+        pressDuck();
+        duckTouchId = touch.identifier; // most recent duck touch owns the hold
+      }
+    }
   },
   { passive: false }
 );
+
+function endTouch(e) {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === duckTouchId) {
+      releaseDuck();
+      duckTouchId = null;
+    }
+  }
+}
+window.addEventListener("touchend", endTouch);
+window.addEventListener("touchcancel", endTouch);
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && state === STATE.PLAYING) state = STATE.PAUSED;
@@ -1196,8 +1257,10 @@ function update() {
   const ramps = Math.floor(meters() / RAMP_INTERVAL_M);
   speed = Math.min(BASE_SCROLL_SPEED + ramps * SPEED_RAMP, MAX_SCROLL_SPEED);
 
-  // Arthur physics: duck only applies on the ground (fast-fall is later polish)
-  arthur.ducking = duckHeld && arthur.grounded;
+  // Arthur physics: duck only applies on the ground (fast-fall is later polish).
+  // duckTimer keeps a quick tap ducking for MIN_DUCK_FRAMES (spec §5).
+  arthur.ducking = (duckHeld || duckTimer > 0) && arthur.grounded;
+  if (duckTimer > 0) duckTimer -= 1;
   arthur.vy += GRAVITY;
   arthur.bottom += arthur.vy;
   if (arthur.bottom >= GROUND_Y) {
@@ -1494,12 +1557,15 @@ function drawCenteredText(lines, startY) {
 }
 
 function drawMenu() {
+  const controls = IS_TOUCH
+    ? "tap upper screen to jump — lower to duck"
+    : "Space / ↑ / W to jump — ↓ / S to duck";
   drawCenteredText(
     [
       ["Arthur's Big Walk", "bold 56px monospace", "#2c3c4e", 0],
-      ["Space / ↑ / W to jump — ↓ / S to duck", "20px monospace", "#2c3c4e", 50],
+      [controls, "20px monospace", "#2c3c4e", 50],
       [`best ${highScore}`, "18px monospace", "#5a6a7a", 84],
-      ["press Space to start", "bold 24px monospace", "#2c3c4e", 140],
+      [IS_TOUCH ? "tap to start" : "press Space to start", "bold 24px monospace", "#2c3c4e", 140],
     ],
     180
   );
@@ -1514,7 +1580,7 @@ function drawGameOver() {
       [`score ${finalScore()}`, "bold 32px monospace", "#ffffff", 48],
       [`${meters()} m + ${treatScore} treat pts`, "18px monospace", "#d0d8e0", 78],
       [newBest ? "NEW BEST!" : `best ${highScore}`, "bold 22px monospace", newBest ? "#ffd75e" : "#d0d8e0", 114],
-      ["press Space to restart", "20px monospace", "#d0d8e0", 154],
+      [IS_TOUCH ? "tap to restart" : "press Space to restart", "20px monospace", "#d0d8e0", 154],
     ],
     200
   );
@@ -1523,7 +1589,7 @@ function drawGameOver() {
 function drawPaused() {
   ctx.fillStyle = "rgba(28, 37, 48, 0.55)";
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-  drawCenteredText([["paused — press any key", "bold 28px monospace", "#ffffff", 0]], 270);
+  drawCenteredText([[IS_TOUCH ? "paused — tap to resume" : "paused — press any key", "bold 28px monospace", "#ffffff", 0]], 270);
 }
 
 function render() {
