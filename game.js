@@ -140,22 +140,31 @@ canvas.height = VIEW_H;
 ctx.imageSmoothingEnabled = false;
 
 // On phones the screen is far wider than the game's 16:9, so a plain "contain"
-// fit leaves big side bars and a small scene. On touch devices we zoom past
-// contain to fill the screen, capped two ways so the zoom is always safe:
-//   - never wider than the viewport, so upcoming obstacles on the right are
-//     never cropped (which would be unfair);
-//   - never so tall that we hide more than the empty street below Arthur, so
-//     the top HUD and Arthur himself always stay on screen.
-// The CSS top-anchors the canvas on touch (see index.html) so all of the
-// vertical overflow is cropped off the bottom street, never the HUD.
-const SAFE_VISIBLE_H = 475; // keep y=0 (HUD) .. y=475 (just below Arthur's feet) visible
+// fit leaves big side bars and a small scene. On touch devices we scale the
+// canvas to fill the screen *width* (no side bars), which makes it taller than
+// the viewport; the overflow is cropped off the empty sky (top) and street
+// (bottom) so the play band stays fully visible. We shift the canvas up so the
+// crop lands correctly and float the HUD/overlays down by the hidden-top
+// amount. This is the largest zoom that costs no reaction runway — going bigger
+// means showing less track ahead (see PLAY_TOP/PLAY_BOTTOM cap).
+const PLAY_TOP = 250;    // logical y of jump-apex headroom that must stay visible
+const PLAY_BOTTOM = 472; // logical y just below Arthur's feet that must stay visible
+let renderTopInset = 0;  // logical px hidden above the viewport; HUD/overlays shift down by this
 
 function fitCanvas() {
   const contain = Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H);
   let scale = contain;
+  renderTopInset = 0;
+  canvas.style.marginTop = "0px";
   if (IS_TOUCH) {
-    const fill = Math.min(window.innerWidth / VIEW_W, window.innerHeight / SAFE_VISIBLE_H);
-    scale = Math.max(contain, fill);
+    // Fill width, but never zoom so far that the crop eats into the play band.
+    const maxScale = window.innerHeight / (PLAY_BOTTOM - PLAY_TOP);
+    scale = Math.min(maxScale, Math.max(contain, window.innerWidth / VIEW_W));
+    const visibleLogH = window.innerHeight / scale;
+    // Slide the visible window so Arthur's feet sit near its bottom edge.
+    const topLog = Math.max(0, Math.min(PLAY_BOTTOM - visibleLogH, VIEW_H - visibleLogH));
+    renderTopInset = topLog;
+    canvas.style.marginTop = `${-Math.round(topLog * scale)}px`;
   }
   canvas.style.width = `${Math.floor(VIEW_W * scale)}px`;
   canvas.style.height = `${Math.floor(VIEW_H * scale)}px`;
@@ -1557,18 +1566,21 @@ function drawHUD() {
   ctx.fillStyle = "#2c3c4e";
   ctx.font = "bold 22px monospace";
   ctx.textAlign = "left";
-  ctx.fillText(`${meters()} m`, 20, 36);
+  // renderTopInset keeps the HUD on screen when the canvas is zoom-cropped on phones.
+  ctx.fillText(`${meters()} m`, 20, renderTopInset + 36);
   ctx.font = "16px monospace";
-  ctx.fillText(`treats ${treatCount}`, 20, 60);
-  ctx.fillText(`best ${highScore}`, 20, 82);
+  ctx.fillText(`treats ${treatCount}`, 20, renderTopInset + 60);
+  ctx.fillText(`best ${highScore}`, 20, renderTopInset + 82);
 }
 
 function drawCenteredText(lines, startY) {
   ctx.textAlign = "center";
+  // Shift into the visible band so overlays aren't cropped by the phone zoom.
+  const y0 = startY + renderTopInset / 2;
   for (const [text, font, color, dy] of lines) {
     ctx.font = font;
     ctx.fillStyle = color;
-    ctx.fillText(text, VIEW_W / 2, startY + dy);
+    ctx.fillText(text, VIEW_W / 2, y0 + dy);
   }
 }
 
